@@ -1,0 +1,151 @@
+openapi: 3.1.0
+info:
+  title: Aitvaras legacy compatibility API
+  version: 0.1.0-inception
+  description: >-
+    Compatibility API for the earlier in-memory Node registration and typed x402
+    intent scaffold. These endpoints are not the current architecture direction,
+    do not use the durable budget ledger, and do not evaluate production policy,
+    sign, or move funds. The implemented budget-only local profile is documented
+    in budget.openapi.yaml. The broader Node Protocol remains proposed.
+servers:
+  - url: http://127.0.0.1:8080
+paths:
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: Service is running
+  /v1/nodes:
+    post:
+      operationId: registerNode
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterNodeRequest" }
+      responses:
+        "201":
+          description: Node registration recorded; this is not attestation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      operationId: listNodes
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Registered nodes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes]
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Node" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/intents:
+    post:
+      operationId: createIntent
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIntentRequest" }
+      responses:
+        "202":
+          description: Intent validated and recorded for future policy evaluation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Intent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/intents/{id}:
+    get:
+      operationId: getIntent
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Intent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Intent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Intent not found
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Local-development token only; production auth is not specified.
+  responses:
+    BadRequest:
+      description: Invalid request
+    Unauthorized:
+      description: Missing or invalid development token
+  schemas:
+    RegisterNodeRequest:
+      type: object
+      additionalProperties: false
+      required: [id, tenant_id, public_url, chains]
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        public_url: { type: string, format: uri }
+        chains:
+          type: array
+          minItems: 1
+          items: { type: string, description: CAIP-2 chain identifier }
+        capabilities:
+          type: array
+          items: { type: string }
+    Node:
+      allOf:
+        - $ref: "#/components/schemas/RegisterNodeRequest"
+        - type: object
+          required: [status, registered_at]
+          properties:
+            status: { type: string, const: registered }
+            registered_at: { type: string, format: date-time }
+    Payment:
+      type: object
+      additionalProperties: false
+      required: [network, asset, amount, pay_to, resource]
+      properties:
+        network: { type: string, description: CAIP-2 chain identifier, example: "eip155:84532" }
+        asset: { type: string, example: USDC }
+        amount: { type: string, pattern: "^(0|[1-9][0-9]*)(\\.[0-9]+)?$", example: "0.10" }
+        pay_to: { type: string }
+        resource: { type: string, format: uri, pattern: "^https://" }
+    CreateIntentRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, agent_id, wallet_id, kind, payment]
+      properties:
+        tenant_id: { type: string }
+        agent_id: { type: string }
+        wallet_id: { type: string }
+        kind: { type: string, const: x402_payment }
+        payment: { $ref: "#/components/schemas/Payment" }
+    Intent:
+      allOf:
+        - $ref: "#/components/schemas/CreateIntentRequest"
+        - type: object
+          required: [id, status, created_at]
+          properties:
+            id: { type: string }
+            status: { type: string, const: pending_policy }
+            created_at: { type: string, format: date-time }

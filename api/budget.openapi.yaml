@@ -1,0 +1,149 @@
+openapi: 3.1.0
+info:
+  title: Aitvaras budget reservation API
+  version: 0.1.0-local
+  description: >-
+    Keyless budget_policy_v0. Application clients are outside the Node fleet.
+    Control forwards to one fixed Node using a separate token. The Node owns one local
+    policy and journal. Receipts are reservation-only simulation, never signing
+    authorization. No keys, chain balances, application execution or funds transfer.
+    JSON bodies are limited to 8192 bytes; duplicate, unknown and non-lowercase
+    keys are rejected. All integer values must fit uint256; gas_limit fits uint64.
+    Production identity, release, refunds and policy updates are not implemented.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Control; client token only, profile must be enabled
+  - url: http://127.0.0.1:8082
+    description: Policy Node; separate Node token, intended for Control
+security:
+  - bearerAuth: []
+paths:
+  /v1/budget:
+    get:
+      operationId: getBudget
+      responses:
+        '200':
+          description: Current local policy and reserved/remaining allowances
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Snapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { $ref: '#/components/responses/UnknownOutcome' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/budget/reservations:
+    post:
+      operationId: reserveBudget
+      description: >-
+        Reserve spend amount and gas_limit times max_fee_per_gas atomically.
+        Repeating the same ID and normalized fields returns the same receipt.
+        Reusing the ID with different fields conflicts. Denials do not reserve.
+        Timeouts do not prove failure; query or retry using the original ID and fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Request' }
+      responses:
+        '200':
+          description: Durable reservation or identical previously recorded receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Receipt' }
+        '400': { description: Malformed or invalid request }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Scope mismatch or either allowance exceeded }
+        '409': { description: Request ID already used with different fields }
+        '502': { $ref: '#/components/responses/UnknownOutcome' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/budget/reservations/{id}:
+    get:
+      operationId: getBudgetReservation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/Identifier' }
+      responses:
+        '200':
+          description: Stored receipt, not evidence of execution
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Receipt' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Reservation not found; concurrent in-flight work may still commit }
+        '502': { $ref: '#/components/responses/UnknownOutcome' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  responses:
+    Unauthorized: { description: Missing or incorrect credential for this boundary }
+    UnknownOutcome: { description: Control could not obtain a Node response; query or retry the original request }
+    Unavailable: { description: Ledger failed closed or reached its 10000-reservation capacity; operator intervention required }
+  schemas:
+    Identifier:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{1,80}$'
+    UInt:
+      type: string
+      pattern: '^(0|[1-9][0-9]{0,77})$'
+      description: Canonical uint256 decimal string; no leading zeros, exponent or fraction
+    PositiveUInt:
+      type: string
+      pattern: '^[1-9][0-9]{0,77}$'
+      description: Positive uint256 decimal string
+    Network:
+      type: string
+      pattern: '^eip155:[1-9][0-9]{0,19}$'
+    Request:
+      type: object
+      additionalProperties: false
+      required: [request_id, policy_id, wallet_id, network, asset, amount, gas_limit, max_fee_per_gas]
+      properties:
+        request_id: { $ref: '#/components/schemas/Identifier' }
+        policy_id: { $ref: '#/components/schemas/Identifier' }
+        wallet_id: { $ref: '#/components/schemas/Identifier' }
+        network: { $ref: '#/components/schemas/Network' }
+        asset: { $ref: '#/components/schemas/Identifier' }
+        amount: { $ref: '#/components/schemas/PositiveUInt' }
+        gas_limit:
+          type: string
+          pattern: '^[1-9][0-9]{0,19}$'
+          description: Positive uint64 gas units
+        max_fee_per_gas: { $ref: '#/components/schemas/PositiveUInt' }
+    Policy:
+      type: object
+      additionalProperties: false
+      required: [policy_id, client_id, wallet_id, network, asset, trade_limit, gas_limit_wei]
+      properties:
+        policy_id: { $ref: '#/components/schemas/Identifier' }
+        client_id: { $ref: '#/components/schemas/Identifier' }
+        wallet_id: { $ref: '#/components/schemas/Identifier' }
+        network: { $ref: '#/components/schemas/Network' }
+        asset: { $ref: '#/components/schemas/Identifier' }
+        trade_limit: { $ref: '#/components/schemas/PositiveUInt' }
+        gas_limit_wei: { $ref: '#/components/schemas/PositiveUInt' }
+    Receipt:
+      type: object
+      additionalProperties: false
+      required: [request, client_id, request_digest, status, gas_reserved_wei]
+      properties:
+        request: { $ref: '#/components/schemas/Request' }
+        client_id: { $ref: '#/components/schemas/Identifier' }
+        request_digest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 of normalized Go Request JSON field order; correlation only, not a signed attestation or cross-language canonicalization contract
+        status: { type: string, const: reserved_simulation }
+        gas_reserved_wei: { $ref: '#/components/schemas/PositiveUInt' }
+    Snapshot:
+      type: object
+      additionalProperties: false
+      required: [policy, trade_reserved, trade_remaining, gas_reserved_wei, gas_remaining_wei, reservations]
+      properties:
+        policy: { $ref: '#/components/schemas/Policy' }
+        trade_reserved: { $ref: '#/components/schemas/UInt' }
+        trade_remaining: { $ref: '#/components/schemas/UInt' }
+        gas_reserved_wei: { $ref: '#/components/schemas/UInt' }
+        gas_remaining_wei: { $ref: '#/components/schemas/UInt' }
+        reservations: { type: integer, minimum: 0, maximum: 10000 }

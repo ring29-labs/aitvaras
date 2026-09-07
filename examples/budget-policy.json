@@ -1,0 +1,9 @@
+{
+  "policy_id": "demo-v1",
+  "client_id": "client-demo",
+  "wallet_id": "wallet-demo",
+  "network": "eip155:84532",
+  "asset": "USDC",
+  "trade_limit": "100000000",
+  "gas_limit_wei": "10000000000000000"
+}
